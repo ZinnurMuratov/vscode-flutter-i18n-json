@@ -374,12 +374,70 @@ export class I18nGenerator implements IDisposable, InsertActionProviderDelegate 
 
     async readI18nFileAsync(locale: string, config: I18nConfig, noFlat?: boolean): Promise<{ [id: string]: any }> {
         const path = this.fs.combinePath(this.workspaceFolder, config.localePath);
-        const filename = this.fs.combinePath(path, `${locale}.json`);
-        const jsonFileContent: any = await this.fs.readJsonFileAsync(filename);
-        if (!noFlat) {
-            return this.flattenObject(jsonFileContent);
+        const localeDirectory = this.fs.combinePath(this.workspaceFolder, config.localePath);
+
+        let allFiles: string[];
+
+        try {
+            allFiles = await this.fs.readAllFilesInFolderAsync(localeDirectory);
+        } catch (error) {
+            throw new Error(`Failed to read locale directory "${localeDirectory}": ${error}`);
         }
-        return jsonFileContent;
+
+        const localePattern = new RegExp(`^${locale}(?:_.*)?\\.json$`, 'i');
+        const localeFiles = allFiles.filter(file => localePattern.test(file));
+
+
+        if (localeFiles.length === 0) {
+            throw new Error(`No translations found for locale "${locale}".`);
+        }
+
+        const jsonContents: any[] = [];
+
+        for (const filename of localeFiles) {
+            const fullPath = this.fs.combinePath(localeDirectory, filename);
+
+            try {
+                const jsonData = await this.fs.readJsonFileAsync(fullPath);
+                jsonContents.push(jsonData);
+            } catch (error) {
+                throw new Error(`Failed to read or parse JSON file "${fullPath}": ${error}`);
+            }
+        }
+    
+    
+        const mergedJson = this.deepMerge(...jsonContents);
+
+        if (!noFlat) {
+            return this.flattenObject(mergedJson);
+        }
+
+        return mergedJson;
+    }
+
+    private deepMerge(...objects: { [key: string]: any }[]): { [key: string]: any } {
+        const result: { [key: string]: any } = {};
+    
+        for (const obj of objects) {
+            for (const key in obj) {
+                if (obj.hasOwnProperty(key)) {
+                    if (
+                        obj[key] &&
+                        typeof obj[key] === 'object' &&
+                        !Array.isArray(obj[key])
+                    ) {
+                        if (!result[key] || typeof result[key] !== 'object') {
+                            result[key] = {};
+                        }
+                        result[key] = this.deepMerge(result[key], obj[key]);
+                    } else {
+                        result[key] = obj[key];
+                    }
+                }
+            }
+        }
+    
+        return result;
     }
 
     async writeI18nFileAsync(locale: string, i18n: any, config: I18nConfig): Promise<void> {
